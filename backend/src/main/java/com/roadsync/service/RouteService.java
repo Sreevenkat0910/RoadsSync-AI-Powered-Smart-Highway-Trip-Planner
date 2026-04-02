@@ -23,15 +23,18 @@ public class RouteService {
 
     private final RestTemplate restTemplate;
     private final MLService mlService;
+    private final RealTimeTrafficService realTimeTrafficService;
     private final String googleMapsApiKey;
 
     public RouteService(
             RestTemplate restTemplate,
             MLService mlService,
+            RealTimeTrafficService realTimeTrafficService,
             @Value("${external.google.maps.api-key:}") String googleMapsApiKey
     ) {
         this.restTemplate = restTemplate;
         this.mlService = mlService;
+        this.realTimeTrafficService = realTimeTrafficService;
         this.googleMapsApiKey = googleMapsApiKey;
     }
 
@@ -79,15 +82,19 @@ public class RouteService {
 
                 MLRequest mlRequest = buildRouteMlRequest(routeName, travelDate, hour);
                 MLResponse mlResponse = mlService.predict(mlRequest);
-                String trafficLevel = mlResponse.traffic_level() == null ? "unknown" : mlResponse.traffic_level();
-                int trafficScore = mlResponse.traffic_score() == null ? 0 : mlResponse.traffic_score();
+                int rawScore = mlResponse.traffic_score() == null ? 0 : mlResponse.traffic_score();
+                int trafficScore = realTimeTrafficService.mergeWithPrediction(rawScore, hour);
+                String trafficLevel = scoreToLevel(trafficScore);
+
+                double tollCost = estimateToll(distanceKm);
 
                 options.add(new RouteOption(
                         routeName,
                         distanceKm,
                         durationMinutes,
                         trafficLevel,
-                        trafficScore
+                        trafficScore,
+                        tollCost
                 ));
             }
 
@@ -109,6 +116,26 @@ public class RouteService {
                 0,
                 sanitizeRoute(routeName)
         );
+    }
+
+    /**
+     * Rough toll estimate (currency-agnostic index): scales with distance.
+     */
+    static double estimateToll(int distanceKm) {
+        if (distanceKm <= 0) {
+            return 0.0;
+        }
+        return Math.round(distanceKm * 2.2 * 10.0) / 10.0;
+    }
+
+    private static String scoreToLevel(int score) {
+        if (score <= 35) {
+            return "low";
+        }
+        if (score <= 70) {
+            return "medium";
+        }
+        return "high";
     }
 
     private String sanitizeRoute(String routeName) {

@@ -36,54 +36,88 @@ public class TripService {
     private final UserRepository userRepository;
     private final VehicleRepository vehicleRepository;
     private final MLService mlService;
+    private final RealTimeTrafficService realTimeTrafficService;
     private final StopService stopService;
     private final PredictionService predictionService;
     private final RouteService routeService;
+    private final RouteOptimizationService routeOptimizationService;
 
     public TripService(
             TripRepository tripRepository,
             UserRepository userRepository,
             VehicleRepository vehicleRepository,
             MLService mlService,
+            RealTimeTrafficService realTimeTrafficService,
             StopService stopService,
             PredictionService predictionService,
-            RouteService routeService
+            RouteService routeService,
+            RouteOptimizationService routeOptimizationService
     ) {
         this.tripRepository = tripRepository;
         this.userRepository = userRepository;
         this.vehicleRepository = vehicleRepository;
         this.mlService = mlService;
+        this.realTimeTrafficService = realTimeTrafficService;
         this.stopService = stopService;
         this.predictionService = predictionService;
         this.routeService = routeService;
+        this.routeOptimizationService = routeOptimizationService;
     }
 
     public TripResponse createTrip(TripRequest request) {
-        User user = userRepository.findById(request.userId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found for userId=" + request.userId()));
+        User user = userRepository.findById(request.getUserId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found for userId=" + request.getUserId()));
 
-        Vehicle vehicle = vehicleRepository.findById(request.vehicleId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Vehicle not found for vehicleId=" + request.vehicleId()));
+        Vehicle vehicle = vehicleRepository.findById(request.getVehicleId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Vehicle not found for vehicleId=" + request.getVehicleId()));
 
         if (!vehicle.getUser().getId().equals(user.getId())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vehicle does not belong to the specified user");
         }
 
         Trip trip = new Trip();
-        trip.setSource(request.source());
-        trip.setDestination(request.destination());
-        trip.setTravelDate(request.travelDate());
+        trip.setSource(request.getSource());
+        trip.setDestination(request.getDestination());
+        trip.setTravelDate(request.getTravelDate());
         trip.setCreatedAt(LocalDateTime.now());
         trip.setUser(user);
         trip.setVehicle(vehicle);
 
         Trip savedTrip = tripRepository.save(trip);
         MLResponse leaveNowPrediction = fetchCurrentTrafficPrediction(savedTrip);
-        Map<String, Object> departureMap = predictionService.getBestDepartureTime(
-                savedTrip.getSource(),
-                savedTrip.getDestination(),
-                savedTrip.getTravelDate()
-        );
+
+        String preferredTimeRaw = request.getPreferredTime();
+        Map<String, Object> overallMap = null;
+        String bestOverallTime;
+        if (preferredTimeRaw == null || preferredTimeRaw.isBlank()) {
+            overallMap = predictionService.getBestDepartureTime(
+                    savedTrip.getSource(),
+                    savedTrip.getDestination(),
+                    savedTrip.getTravelDate(),
+                    null,
+                    null,
+                    null
+            );
+            bestOverallTime = normalizeBestDepartureTime((String) overallMap.get("bestDepartureTime"));
+        } else {
+            // Do not compute global best when user chose a band — avoids suggesting e.g. 4 AM while "afternoon" is selected.
+            bestOverallTime = null;
+        }
+
+        Map<String, Object> departureMap;
+        if (preferredTimeRaw != null && !preferredTimeRaw.isBlank()) {
+            departureMap = predictionService.getBestDepartureTime(
+                    savedTrip.getSource(),
+                    savedTrip.getDestination(),
+                    savedTrip.getTravelDate(),
+                    request.getPreferredStartHour(),
+                    request.getPreferredEndHour(),
+                    preferredTimeRaw
+            );
+        } else {
+            departureMap = overallMap;
+        }
+
         String bestDepartureTime = (String) departureMap.get("bestDepartureTime");
         @SuppressWarnings("unchecked")
         List<TimePrediction> rawPredictions = (List<TimePrediction>) departureMap.get("predictions");
@@ -91,6 +125,9 @@ public class TripService {
         if (bestDepartureTime == null || bestDepartureTime.isBlank() || "N/A".equalsIgnoreCase(bestDepartureTime)) {
             bestDepartureTime = "Not available";
         }
+
+        String bestPreferredTime =
+                preferredTimeRaw != null && !preferredTimeRaw.isBlank() ? bestDepartureTime : null;
 
         final String bestTimeKey = bestDepartureTime;
         TimePrediction bestPrediction = predictions.stream()
@@ -108,11 +145,13 @@ public class TripService {
         // Stops are still computed for internal use; response now focuses on departure alternatives.
         double approximateDistanceKm = 250.0;
         List<Stop> stops = stopService.getStops(approximateDistanceKm);
-        if (stops.isEmpty()) {
-            // no-op, keeps placeholder logic explicit for future routing integration
-        }
+        List<Stop> resolvedStops = (stops == null || stops.isEmpty())
+                ? List.of(new Stop("Emergency Medical Aid", "medical", "Near midpoint", 125.0))
+                : stops;
 
-        int currentScore = leaveNowPrediction.traffic_score() == null ? 0 : leaveNowPrediction.traffic_score();
+        int currentHour = LocalDateTime.now().getHour();
+        int currentScore = realTimeTrafficService.mergeWithPrediction(leaveNowPrediction.traffic_score(), currentHour);
+        String currentLevel = scoreToLevel(currentScore);
         int bestScore = bestPrediction == null || bestPrediction.trafficScore() == null ? 0 : bestPrediction.trafficScore();
         int currentDelay = DelayCalculator.calculateDelay(currentScore);
         int bestDelay = DelayCalculator.calculateDelay(bestScore);
@@ -124,9 +163,11 @@ public class TripService {
                 savedTrip.getTravelDate(),
                 routeHour
         );
+        RouteOptimizationService.RouteOptimizationResult routeOpt =
+                routeOptimizationService.optimize(routes);
 
         LeaveNowInfo leaveNow = new LeaveNowInfo(
-                leaveNowPrediction.traffic_level() == null ? "unknown" : leaveNowPrediction.traffic_level(),
+                currentLevel,
                 currentScore,
                 currentDelay
         );
@@ -137,17 +178,25 @@ public class TripService {
                 bestDelay
         );
 
+        System.out.println("Trip stops before response: " + resolvedStops);
+
         return new TripResponse(
                 "Trip saved successfully",
                 savedTrip.getId(),
-                leaveNowPrediction.traffic_level(),
+                currentLevel,
                 currentScore,
                 bestDepartureTime,
+                bestOverallTime,
+                bestPreferredTime,
                 alternatives,
                 routes,
+                routeOpt.bestRoute(),
+                routeOpt.scoreBreakdown(),
+                resolvedStops,
                 leaveNow,
                 bestTime,
-                timeSaved
+                timeSaved,
+                realTimeTrafficService.isLiveTrafficEnabled()
         );
     }
 
@@ -214,6 +263,23 @@ public class TripService {
     private String capitalize(String upperCaseText) {
         String lower = upperCaseText.toLowerCase();
         return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
+    }
+
+    private String scoreToLevel(int score) {
+        if (score <= 35) {
+            return "low";
+        }
+        if (score <= 70) {
+            return "medium";
+        }
+        return "high";
+    }
+
+    private static String normalizeBestDepartureTime(String raw) {
+        if (raw == null || raw.isBlank() || "N/A".equalsIgnoreCase(raw)) {
+            return "Not available";
+        }
+        return raw;
     }
 }
 

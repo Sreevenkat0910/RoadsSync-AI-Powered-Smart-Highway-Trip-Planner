@@ -1,6 +1,52 @@
 @import "tailwindcss";
 
+:root {
+  --coffee-primary: #4b2e2e;
+  --coffee-secondary: #6f4e37;
+  --coffee-light: #c4a484;
+  --bg-soft: #f5f1ed;
+  --text-primary: #2e2e2e;
+  --text-secondary: #6b6b6b;
+}
+
 body {
   margin: 0;
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg-soft);
+  color: var(--text-primary);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.premium-card {
+  @apply rounded-2xl bg-white p-5 shadow-lg border border-[#E9DFD7] transition-all duration-300;
+}
+
+.premium-card:hover {
+  @apply shadow-xl -translate-y-0.5;
+}
+
+.coffee-input {
+  @apply w-full rounded-lg border border-[#D9CDC3] bg-white px-3 py-2 text-sm text-[#2E2E2E] outline-none transition;
+}
+
+.coffee-input:focus {
+  @apply border-[#6F4E37] ring-2 ring-[#C4A484]/40;
+}
+
+.coffee-button {
+  @apply rounded-lg bg-[#6F4E37] px-4 py-2 text-white transition hover:bg-[#5E412F];
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

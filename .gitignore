@@ -13,3 +13,11 @@ build/
 # Dependencies (common)
 node_modules/
 
+# JVM / Maven build output
+backend/target/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyc
+

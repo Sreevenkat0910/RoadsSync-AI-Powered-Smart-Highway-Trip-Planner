@@ -8,11 +8,17 @@ public record TripResponse(
         String trafficLevel,
         Integer trafficScore,
         String bestDepartureTime,
+        String bestOverallTime,
+        String bestPreferredTime,
         List<TimePrediction> alternatives,
         List<RouteOption> routes,
+        RouteScoreDetail bestRoute,
+        RouteScoreBreakdown scoreBreakdown,
+        List<Stop> stops,
         LeaveNowInfo leaveNow,
         BestTimeInfo bestTime,
-        Integer timeSaved
+        Integer timeSaved,
+        Boolean liveTraffic
 ) {
 }
 

@@ -5,7 +5,8 @@ public record RouteOption(
         Integer distanceKm,
         Integer durationMinutes,
         String trafficLevel,
-        Integer trafficScore
+        Integer trafficScore,
+        Double tollCost
 ) {
 }
 
