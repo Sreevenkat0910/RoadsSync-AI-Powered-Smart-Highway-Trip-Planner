@@ -1,0 +1,15 @@
+# Local environment files (never commit secrets)
+.env
+.env.*
+
+# OS/editor noise
+.DS_Store
+*.log
+
+# Build output (common)
+dist/
+build/
+
+# Dependencies (common)
+node_modules/
+

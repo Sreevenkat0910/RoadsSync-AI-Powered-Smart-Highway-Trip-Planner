@@ -1,0 +1,9 @@
+RoadsSync API Key Placeholders (DO NOT PUT REAL KEYS HERE)
+
+GOOGLE_MAPS_API_KEY=
+GOOGLE_PLACES_API_KEY=
+
+Notes:
+- This file is safe to commit because it contains placeholders only.
+- Store real keys in your local .env file (ignored by git) or in your deployment environment variables/secret manager.
+
